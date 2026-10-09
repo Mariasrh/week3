@@ -13,7 +13,7 @@ if sys.platform == "win32":
 
 model = ChatGroq(model="qwen/qwen3.8-27b", temperature=0, max_tokens=350)
 
-# --- 1. Outils Voyage ---
+#  Trip Tools 
 @tool
 def search_trip_flights(departure: str, arrival: str) -> str:
     """Finds flight routes for personal trips."""
@@ -29,12 +29,26 @@ def search_activities(city: str, interest: str) -> str:
     """Discovers local activities, sights, and culinary highlights."""
     return f"Activities in {city} ({interest}): Guided historical tour, Local food tasting, Museum pass."
 
-# --- 2. Sous-Agents Voyage ---
-trip_flight_agent = create_agent(model=model, tools=[search_trip_flights], system_prompt="You are a flight booking expert.")
-hotel_agent = create_agent(model=model, tools=[search_hotels], system_prompt="You are an accommodation specialist.")
-activity_agent = create_agent(model=model, tools=[search_activities], system_prompt="You are a local tour guide and activity expert.")
+# - Specialized Sub-Agents 
+trip_flight_agent = create_agent(
+    model=model, 
+    tools=[search_trip_flights], 
+    system_prompt="You are a flight booking expert."
+)
 
-# --- 3. Sous-agents encapsulés en outils ---
+hotel_agent = create_agent(
+    model=model, 
+    tools=[search_hotels], 
+    system_prompt="You are an accommodation specialist."
+)
+
+activity_agent = create_agent(
+    model=model, 
+    tools=[search_activities], 
+    system_prompt="You are a local tour guide and activity expert."
+)
+
+#  Wrap Sub-Agents as Async Tools for the Supervisor 
 @tool
 async def trip_flight_specialist(query: str) -> str:
     """Consults the flight specialist."""
@@ -53,7 +67,7 @@ async def activity_specialist(query: str) -> str:
     res = await activity_agent.ainvoke({"messages": [HumanMessage(content=query)]})
     return res["messages"][-1].content
 
-# --- 4. Trip Supervisor ---
+#  Personal Trip Advisor 
 trip_supervisor = create_agent(
     model=model,
     tools=[trip_flight_specialist, hotel_specialist, activity_specialist],
@@ -63,7 +77,6 @@ trip_supervisor = create_agent(
 async def run_trip_chat(user_message: str, history: list) -> str:
     messages = []
     
-    # Prise en charge compatible Gradio 6.0+ (dicts ou tuples)
     for msg in history:
         if isinstance(msg, dict):
             if msg.get("role") == "user" and msg.get("content"):

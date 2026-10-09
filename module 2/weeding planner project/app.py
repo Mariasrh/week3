@@ -11,7 +11,6 @@ if sys.platform == "win32":
 from wedding_team import run_wedding_chat
 from trip_team import run_trip_chat
 
-# Fonctions d'interface Chat asynchrones avec délai anti-rate-limit
 async def wedding_chat_interface(message, history):
     try:
         await asyncio.sleep(2)
@@ -26,7 +25,6 @@ async def plan_trip_chat_interface(message, history):
     except Exception as e:
         return f"⚠️ Execution Error: {str(e)}"
 
-# Interface Gradio 6.0+
 with gr.Blocks(title="Multi-Agent Chat Studio") as demo:
     gr.Markdown(
         """
@@ -36,7 +34,7 @@ with gr.Blocks(title="Multi-Agent Chat Studio") as demo:
     )
     
     with gr.Tabs():
-        # --- TAB 1: WEDDING PLANNER CHAT ---
+        #  WEDDING PLANNER CHAT 
         with gr.TabItem("💒 Wedding Planner Assistant"):
             gr.ChatInterface(
                 fn=wedding_chat_interface,
@@ -47,7 +45,7 @@ with gr.Blocks(title="Multi-Agent Chat Studio") as demo:
                 ]
             )
             
-        # --- TAB 2: PERSONAL TRIP PLANNER CHAT ---
+        #  PERSONAL TRIP PLANNER CHAT 
         with gr.TabItem("✈️ Personal Trip Assistant"):
             gr.ChatInterface(
                 fn=plan_trip_chat_interface,

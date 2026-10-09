@@ -11,10 +11,9 @@ load_dotenv()
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-# Modèle actif Groq avec limitation max_tokens pour respecter les quotas OTPM
 model = ChatGroq(model="qwen/qwen3.8-27b", temperature=0, max_tokens=350)
 
-# --- 1. Outils des sous-agents ---
+#  Sub-Agent Tools 
 @tool
 def search_flights_tool(origin: str, destination: str, date: str) -> str:
     """Searches available flight options to the destination."""
@@ -35,7 +34,7 @@ def generate_writing_tool(topic: str, tone: str) -> str:
     """Drafts wedding speeches, invitation messages, or vows."""
     return f"Drafted [{tone}] message for [{topic}]: 'We warmly invite you to join us in celebrating our wedding day filled with love!'"
 
-# --- 2. Sous-Agents Spécialistes ---
+# Specialized Sub-Agents 
 travel_agent = create_agent(
     model=model, 
     tools=[search_flights_tool], 
@@ -60,7 +59,7 @@ writer_agent = create_agent(
     system_prompt="You are a creative writer specializing in wedding invitations, vows, and speeches."
 )
 
-# --- 3. Encapsulation des sous-agents en outils pour le coordinateur ---
+#  Wrap Sub-Agents as Async Tools for the Coordinator 
 @tool
 async def flight_specialist(query: str) -> str:
     """Consults the Travel Agent specialist for flight options."""
@@ -85,7 +84,7 @@ async def writing_specialist(query: str) -> str:
     res = await writer_agent.ainvoke({"messages": [HumanMessage(content=query)]})
     return res["messages"][-1].content
 
-# --- 4. Wedding Coordinator (Superviseur Conversationnel) ---
+#  Conversational Wedding Coordinator 
 wedding_coordinator = create_agent(
     model=model,
     tools=[flight_specialist, venue_specialist, music_specialist, writing_specialist],
@@ -96,7 +95,6 @@ Help the user plan their destination wedding step by step. If key details are mi
 async def run_wedding_chat(user_message: str, history: list) -> str:
     messages = []
     
-    # Prise en charge compatible Gradio 6.0+ (dicts ou tuples)
     for msg in history:
         if isinstance(msg, dict):
             if msg.get("role") == "user" and msg.get("content"):
