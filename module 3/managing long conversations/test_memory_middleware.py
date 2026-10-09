@@ -7,14 +7,11 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.agents import create_agent
 
-# Load environment variables
 load_dotenv()
 
-# Fix event loop policy for Windows OS
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-# Base LLM model
 base_model = ChatGroq(model="qwen/qwen3.8-27b", temperature=0)
 
 # Global flag to control middleware behavior
@@ -110,7 +107,7 @@ async def run_middleware_test():
 
     state_before = memory.get(config)
     msgs_before = state_before["channel_values"]["messages"]
-    print(f"\n📊 Total messages stored in memory checkpointer: {len(msgs_before)}")
+    print(f"\nTotal messages stored in memory checkpointer: {len(msgs_before)}")
 
     print("\n==================================================")
     print(" TASK 2: Enabling Before-Model Filtering Middleware ")
@@ -118,7 +115,7 @@ async def run_middleware_test():
 
     # Activate middleware filtering
     purge_active = True
-    print("✅ Activated middleware filter to intercept messages before model invocation.")
+    print(" Activated middleware filter to intercept messages before model invocation.")
 
     print("\n==================================================")
     print(" TASK 3: Proof Test & Token Count Comparison ")
