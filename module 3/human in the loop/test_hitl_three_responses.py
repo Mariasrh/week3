@@ -3,119 +3,121 @@ import asyncio
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+
+env_path = Path(__file__).resolve().parent / ".env"
+if not env_path.exists():
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+
+load_dotenv(dotenv_path=env_path)
+
 from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.agents import create_agent
 
-# Chargement des variables d'environnement depuis le dossier parent si besoin
-env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(dotenv_path=env_path)
-if not os.getenv("GROQ_API_KEY"):
-    load_dotenv()
-
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-# Initialisation du modèle avec max_tokens pour limiter l'utilisation du quota Groq
+# Initialize LLM
 model = ChatGroq(model="qwen/qwen3.8-27b", temperature=0, max_tokens=300)
 
-# --- 1. Définition des Outils ---
+# Tool Definitions 
 @tool
 def read_inbox() -> str:
-    """Lit les emails reçus (AUTOMATIQUE - Action de lecture sans risque)."""
-    return "Email reçu : 'Merci de me confirmer le tarif pour 80 personnes le 15 Juin.'"
+    """Reads incoming emails (AUTOMATIC - Read-only low risk action)."""
+    return "Received email from client@example.com: 'Please confirm the pricing for 80 guests on June 15th.'"
 
 @tool
 def send_email_tool(recipient: str, subject: str, body: str) -> str:
-    """Envoie un email (VERROUILLÉ - Action sensible vers un tiers)."""
-    return f"✅ EMAIL ENVOYÉ À {recipient} | Sujet: {subject} | Contenu: {body}"
+    """Sends an email (GATED - Sensitive action requiring human approval)."""
+    return f"✅ EMAIL SENT TO {recipient} | Subject: {subject} | Body: {body}"
 
 memory = MemorySaver()
 
-# Interruption automatique configurée avant l'exécution des outils
+# Interrupt before the 'tools' node
 agent = create_agent(
     model=model,
     tools=[read_inbox, send_email_tool],
     checkpointer=memory,
-    system_prompt="Tu es un assistant de messagerie. Lis les emails et réponds quand demandé.",
+    system_prompt="You are an automated email assistant. First use read_inbox to check messages, then use send_email_tool to send the requested confirmation.",
     interrupt_before=["tools"]
 )
 
 async def test_response_mode(mode: str, thread_id: str):
     config = {"configurable": {"thread_id": thread_id}}
     print(f"\n==================================================")
-    print(f"🧪 TEST DU MODE : {mode.upper()}")
+    print(f" TESTING RESPONSE MODE: {mode.upper()}")
     print(f"==================================================")
     
-    prompt = "Lit mon inbox puis réponds par email pour donner le tarif de 4 500 €."
+    prompt = "Read my inbox, then send an email to client@example.com confirming the rate of €4,500."
     
-    # Lancement initial : l'agent s'exécute jusqu'à la première interruption
-    async for event in agent.astream({"messages": [HumanMessage(content=prompt)]}, config=config):
+    # First execution pass
+    async for _ in agent.astream({"messages": [HumanMessage(content=prompt)]}, config=config):
         pass
 
     state = memory.get(config)
     last_msg = state['channel_values']['messages'][-1]
-    
-    # Si le premier outil appelé est read_inbox (automatique), on poursuit jusqu'à l'outil sensible
-    if hasattr(last_msg, 'tool_calls') and last_msg.tool_calls and last_msg.tool_calls[0]['name'] == 'read_inbox':
-        print("⚡ Outil 'read_inbox' exécuté automatiquement.")
-        async for event in agent.astream(None, config=config):
-            pass
-        state = memory.get(config)
-        last_msg = state['channel_values']['messages'][-1]
+
+    # If read_inbox was called, automatically resume execution past the read-only step
+    if hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
+        if last_msg.tool_calls[0]['name'] == 'read_inbox':
+            print(" Executing read-only tool 'read_inbox' automatically...")
+            async for _ in agent.astream(None, config=config):
+                pass
+            state = memory.get(config)
+            last_msg = state['channel_values']['messages'][-1]
+
+    # Verify we are paused at send_email_tool
+    if not (hasattr(last_msg, 'tool_calls') and last_msg.tool_calls):
+        print(" Error: Agent did not trigger a tool call.")
+        return
 
     tool_call = last_msg.tool_calls[0]
-    print(f"⏸️ Interruption sur l'outil : {tool_call['name']}")
-    print(f"📝 Arguments proposés : {tool_call['args']}")
+    print(f"⏸ Interrupted at gated tool boundary: {tool_call['name']}")
+    print(f" Proposed arguments: {tool_call['args']}")
 
-    # --- 2. Application des 3 réponses humaines ---
+    #  Apply 3 Response Modes 
     if mode == "approve":
-        print("\n👉 Action : APPROVE (Approbation sans modification)")
-        async for event in agent.astream(None, config=config):
+        print("\n Action: APPROVE (Proceed without modification)")
+        async for _ in agent.astream(None, config=config):
             pass
 
     elif mode == "reject":
-        print("\n👉 Action : REJECT WITH REASON (Rejet avec motif)")
+        print("\n Action: REJECT WITH REASON (Deny execution with feedback)")
         rejection_msg = ToolMessage(
-            content="Action refusée par l'utilisateur : Le tarif de 4500€ est erroné, ne pas envoyer cet email.",
+            content="Action rejected by user: The €4,500 quote is incorrect. Do not send this email.",
             tool_call_id=tool_call['id']
         )
-        # Injection du rejet dans le nœud "tools"
         agent.update_state(config, {"messages": [rejection_msg]}, as_node="tools")
-        async for event in agent.astream(None, config=config):
+        async for _ in agent.astream(None, config=config):
             pass
 
     elif mode == "edit":
-        print("\n👉 Action : EDIT (Édition directe des arguments)")
+        print("\n Action: EDIT (Directly modify proposed arguments)")
         edited_args = tool_call['args'].copy()
-        
-        # 1. Mise à jour des arguments de l'outil avec le montant corrigé
-        edited_args['body'] = "Bonjour,\n\nJe vous confirme le tarif ferme de 4 200 € pour 80 personnes le 15 juin.\n\nCordialement"
+        edited_args['body'] = "Hello,\n\nI am pleased to confirm our firm quote of €4,200 for 80 guests on June 15th.\n\nBest regards,"
         last_msg.tool_calls[0]['args'] = edited_args
         
-        # 2. Injection d'un message d'instruction utilisateur pour aligner la consigne dans l'historique
         human_note = HumanMessage(
-            content="[Instruction Utilisateur HITL] : Le montant du tarif a été ajusté à 4 200 € par l'utilisateur pour cet envoi. Considère ce nouveau montant comme la consigne valide."
+            content="[HITL User Instruction]: The quoted rate was updated to €4,200 by the user for this send action."
         )
-        
         agent.update_state(config, {"messages": [last_msg, human_note]})
-        async for event in agent.astream(None, config=config):
+        async for _ in agent.astream(None, config=config):
             pass
 
     final_state = memory.get(config)
-    print(f"\n💬 Réponse finale de l'agent :\n{final_state['channel_values']['messages'][-1].content}")
+    print(f"\n Final Agent Response:\n{final_state['channel_values']['messages'][-1].content}")
 
 async def main():
     await test_response_mode("approve", "thread_1")
     
-    print("\n⏳ Pause de 10 secondes (Gestion des quotas Groq)...")
+    print("\n Pause (10s delay)...")
     await asyncio.sleep(10)
     
     await test_response_mode("reject", "thread_2")
     
-    print("\n⏳ Pause de 10 secondes (Gestion des quotas Groq)...")
+    print("\n Pause (10s delay)...")
     await asyncio.sleep(10)
     
     await test_response_mode("edit", "thread_3")
