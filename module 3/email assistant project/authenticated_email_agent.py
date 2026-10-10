@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment key
 current_dir = Path(__file__).resolve().parent
 possible_env_paths = [
     current_dir / ".env",
@@ -23,9 +22,9 @@ if not os.getenv("GROQ_API_KEY"):
 
 from langchain_groq import ChatGroq
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage, ToolMessage
-from langgraph.checkpoint.memory import MemorySaver
-from langchain.agents import create_agent
+from langchain_core.messages import ToolMessage
+from langgraph.prebuilt import create_react_agent
+from langgraph.graph import StateGraph, MessagesState, START, END
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -54,18 +53,10 @@ def send_email(recipient: str, subject: str, body: str) -> str:
     """Sends an email (Sensitive action protected by HITL)."""
     return f"EMAIL SENT TO {recipient} | Subject: {subject} | Body: {body}"
 
-memory = MemorySaver()
-
-async def run_authenticated_agent(input_state: dict, config: dict):
-    state = memory.get(config)
-    messages = []
+# Dynamic agent node for LangGraph Studio / Agent Chat UI
+async def dynamic_doorman_node(state: MessagesState):
+    messages = state["messages"]
     
-    if state and "messages" in state.get("channel_values", {}):
-        messages = state["channel_values"]["messages"]
-    elif input_state and "messages" in input_state:
-        messages = input_state["messages"]
-
-    # Strict check for authentication status across the full history
     is_authenticated = any(
         isinstance(msg, ToolMessage) and "SUCCESS:" in str(msg.content)
         for msg in messages
@@ -77,7 +68,6 @@ async def run_authenticated_agent(input_state: dict, config: dict):
             "Use read_inbox to check emails and send_email to send or reply to messages."
         )
         tools = [read_inbox, send_email]
-        interrupt_list = ["tools"]
     else:
         system_prompt = (
             "You are a strict security doorman. "
@@ -85,62 +75,18 @@ async def run_authenticated_agent(input_state: dict, config: dict):
             "Do not call any other function."
         )
         tools = [authenticate]
-        interrupt_list = None
 
-    agent = create_agent(
-        model=model,
-        tools=tools,
-        checkpointer=memory,
-        system_prompt=system_prompt,
-        interrupt_before=interrupt_list
-    )
+    sub_agent = create_react_agent(model=model, tools=tools, prompt=system_prompt)
+    result = await sub_agent.ainvoke({"messages": messages})
+    return {"messages": result["messages"]}
 
-    return await agent.ainvoke(input_state, config=config)
+# Build the main graph exported to langgraph.json
+workflow = StateGraph(MessagesState)
+workflow.add_node("doorman_agent", dynamic_doorman_node)
+workflow.add_edge(START, "doorman_agent")
+workflow.add_edge("doorman_agent", END)
 
-async def main_chat():
-    config = {"configurable": {"thread_id": "user_chat_session"}}
-    print("==================================================")
-    print(" SECURE EMAIL AGENT CHAT (Type 'exit' to quit)")
-    print("==================================================")
-
-    while True:
-        user_input = input("\nYou: ")
-        if user_input.lower().strip() in ["exit", "quit"]:
-            print("Exiting chat session.")
-            break
-
-        res = await run_authenticated_agent({"messages": [HumanMessage(content=user_input)]}, config)
-        
-        state = memory.get(config)
-        last_msg = state['channel_values']['messages'][-1]
-
-        # Tool resolution loop
-        while hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
-            tool_call = last_msg.tool_calls[0]
-
-            # Human-In-The-Loop interruption on send_email
-            if tool_call['name'] == 'send_email':
-                print(f"\n[HITL APPROVAL REQUIRED]")
-                print(f"Action: Proposed email to '{tool_call['args'].get('recipient')}'")
-                print(f"Subject: '{tool_call['args'].get('subject')}'")
-                print(f"Body: '{tool_call['args'].get('body')}'")
-                
-                approval = input("Approve sending this email? (yes/no): ").strip().lower()
-                if approval in ["yes", "y"]:
-                    print("Executing send_email...")
-                    res = await run_authenticated_agent(None, config)
-                else:
-                    print("Email sending cancelled by user.")
-                    break
-            else:
-                # Automatic execution of safe tools (authenticate, read_inbox)
-                res = await run_authenticated_agent(None, config)
-
-            state = memory.get(config)
-            last_msg = state['channel_values']['messages'][-1]
-
-        if hasattr(last_msg, 'content') and last_msg.content:
-            print(f"Agent: {last_msg.content}")
-
-if __name__ == "__main__":
-    asyncio.run(main_chat())
+# IMPORTANT: Remove checkpointer here as LangGraph Studio handles it automatically
+graph = workflow.compile(
+    interrupt_before=["doorman_agent"]
+)
